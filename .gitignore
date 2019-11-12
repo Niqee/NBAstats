@@ -2,3 +2,4 @@
 geckodriver.log
 .idea/
 /clear_player_stats.bat
+/main.py
