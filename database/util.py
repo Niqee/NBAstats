@@ -33,9 +33,10 @@ class DBAdapter(object):
     def create_table(self,
                      table_name: str,
                      params: list,
+                     extra_params: str = None,
                      verbose: bool = True):
 
-        main_blank = "CREATE TABLE [{name}] ({columns});"
+        main_blank = "CREATE TABLE [{name}] ({columns} {extra_params});"
         column_blank = "{name} {type} {attrs}, "
         columns_part = ""
 
@@ -47,7 +48,10 @@ class DBAdapter(object):
         for t_column_params in table_columns_params:
             t_column = column_blank.format(**t_column_params)
             columns_part += t_column
-        main_command = main_blank.format(name=table_name, columns=columns_part)
+        if not extra_params:
+            main_command = main_blank.format(name=table_name, columns=columns_part, extra_params="")
+        else:
+            main_command = main_blank.format(name=table_name, columns=columns_part, extra_params=extra_params)
 
         self.exec(main_command, no_return=True, verbose=verbose)
 
@@ -55,7 +59,8 @@ class DBAdapter(object):
                       table_name: str,
                       data_df: pd.DataFrame,
                       use_into=False,
-                      create_table_params=None,
+                      create_table_params: list = None,
+                      create_table_extra_params: str = None,
                       verbose=True):
 
         command_blank = "INSERT {into} [{table_name}] {columns} VALUES ({values})"
@@ -63,7 +68,7 @@ class DBAdapter(object):
         column_names = data_df.columns
 
         if self.table_not_exists(table_name):
-            self.create_table(table_name, create_table_params)
+            self.create_table(table_name, params=create_table_params, extra_params=create_table_extra_params)
 
         for idx in data_df.index:
             values_str = ""
