@@ -7,7 +7,12 @@ import pandas as pd
 
 
 # TODO: Get more columns
-def parse_players(parser: SeleniumParser, db_adapter: DBAdapter):
+def parse_players(parser: SeleniumParser, db_adapter: DBAdapter, verbose=True):
+    start_msg = "Players parsing"
+
+    if verbose:
+        print(start_msg)
+
     main_url = "https://www.basketball-reference.com/players/{letter}"
     players_xpath = "//tbody//th[@data-stat='player']//a"
 
@@ -64,7 +69,7 @@ def parse_teams(parser: SeleniumParser, db_adapter: DBAdapter):
     db_adapter.save_to_table(table_name, teams_df, create_table_params=table_params)
 
 
-def parse_some_games(month, year, parser: SeleniumParser):
+def parse_some_games(month, year, parser: SeleniumParser, db_adapted: DBAdapter, verbose=True):
     blank_url = "https://www.basketball-reference.com/leagues/NBA_{year}_games-{month}.html"
     xpath = "//tbody/tr/td[@data-stat='box_score_text']/a"
     game_list_url = blank_url.format(year=year, month=month)
@@ -75,264 +80,190 @@ def parse_some_games(month, year, parser: SeleniumParser):
     game_links = [game_info.get_attribute('href') for game_info in res]
 
     for idx, game_link in enumerate(game_links):
-        parse_game(game_link, parser)
-        print('{}/{}'.format(idx + 1, len(game_links)))
+        parse_game(game_link, parser, db_adapted)
+        if verbose:
+            print('{}/{}'.format(idx + 1, len(game_links)))
 
 
 # noinspection PyBroadException
-def parse_game(game_url, parser: SeleniumParser):
-    parser.reconnect(game_url)
-
-    teams_xpath = "//a[@itemprop='name']"
+def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
+    name_xpath = "//a[@itemprop='name']"
     date_xpath = "//div[@class='scorebox_meta']/div[1]"
     scores_xpath = "//div[@class='score']"
-
     players_basics_blank_xpath = "//div[contains(@id, 'all_box-{team}-game-basic')]//tbody/" \
                                  "tr[not(@class)]"
     players_advanced_blank_xpath = "//div[contains(@id, 'all_box-{team}-game-advanced')]//tbody/" \
                                    "tr[not(@class)]"
 
-    team1_short = parser.get_xpath(teams_xpath)[0].get_attribute("href").split('/')[-2]
-    team2_short = parser.get_xpath(teams_xpath)[1].get_attribute("href").split('/')[-2]
+    parser.reconnect(game_url)
 
-    team1_players_basics_xpath = players_basics_blank_xpath.format(team=team1_short)
-    team2_players_basics_xpath = players_basics_blank_xpath.format(team=team2_short)
+    teams_stats_urls = list(map(lambda x: x.get_attribute("href"), parser.get_xpath(name_xpath)))
+    teams_urls = list(map(lambda x: x[:x.rindex('/') + 1], teams_stats_urls))
 
-    team1_players_advanced_xpath = players_advanced_blank_xpath.format(team=team1_short)
-    team2_players_advanced_xpath = players_advanced_blank_xpath.format(team=team2_short)
+    team1_info = db_adapter.select_from_table('Teams',
+                                              columns='TRIM(url), TRIM(short_name)',
+                                              condition="url='{t_url}'".format(t_url=teams_urls[0]))
+    team2_info = db_adapter.select_from_table('Teams',
+                                              columns='TRIM(url), TRIM(short_name)',
+                                              condition="url='{t_url}'".format(t_url=teams_urls[1]))
+    teams_info = [team1_info[0], team2_info[0]]
 
-    g_date = datetime.datetime.strptime(parser.get_xpath(date_xpath)[0].text,
-                                        "%I:%M %p, %B %d, %Y").strftime("%d/%m/%Y")
-    teams = parser.get_xpath(teams_xpath)
-    scores = parser.get_xpath(scores_xpath)
+    teams_short = [item[1] for item in teams_info]
 
-    g_t1_link = teams[0].get_attribute('href')
-    g_t2_link = teams[1].get_attribute('href')
-    g_t1_score = scores[0].text
-    g_t2_score = scores[1].text
+    teams_players_basics_xpath = list(map(lambda x: players_basics_blank_xpath.format(team=x), teams_short))
+    teams_players_advanced_xpath = list(map(lambda x: players_advanced_blank_xpath.format(team=x), teams_short))
 
-    game_row = {'GameUrl': game_url,
-                'Date': g_date,
-                'TeamLink1': g_t1_link,
-                'TeamLink2': g_t2_link,
-                'TeamScore1': g_t1_score,
-                'TeamScore2': g_t2_score}
+    game_date = datetime.datetime.strptime(parser.get_xpath(date_xpath)[0].text,
+                                           "%I:%M %p, %B %d, %Y").strftime("%d/%m/%Y")
 
-    t1_basic_stats = parser.get_xpath(team1_players_basics_xpath)
-    t1_advanced_stats = parser.get_xpath(team1_players_advanced_xpath)
-    t2_basic_stats = parser.get_xpath(team2_players_basics_xpath)
-    t2_advanced_stats = parser.get_xpath(team2_players_advanced_xpath)
+    game_teams_links = [item[0] for item in teams_info]
+    game_teams_scores = list(map(lambda x: x.text, parser.get_xpath(scores_xpath)))
 
-    # for item in t1_basic_stats:
-    #     print(item.text)
-    # print("----")
-    # for item in t2_basic_stats:
-    #     print(item.text)
+    game_row = {'url': game_url,
+                'date': game_date,
+                'team1_link': game_teams_links[0],
+                'team2_link': game_teams_links[1],
+                'team1_score': game_teams_scores[0],
+                'team2_score': game_teams_scores[1]}
 
-    # Loop fot team 1
+    basic_stats = list(map(lambda x: parser.get_xpath(x), teams_players_basics_xpath))
+    advanced_stats = list(map(lambda x: parser.get_xpath(x), teams_players_advanced_xpath))
 
-    rows_number = len(t1_basic_stats)
+    for team_idx in range(2):
+        rows_number = len(basic_stats[team_idx])
+        for player_num in range(rows_number):
+            p_basic_stats = basic_stats[team_idx][player_num].find_elements_by_xpath('child::*')
+            p_advanced_stats = advanced_stats[team_idx][player_num].find_elements_by_xpath('child::*')
 
-    for player_num in range(rows_number):
-        p_basic_stats = t1_basic_stats[player_num].find_elements_by_xpath('child::*')
-        p_advanced_stats = t1_advanced_stats[player_num].find_elements_by_xpath('child::*')
+            p_url = p_basic_stats[0].find_element_by_xpath('child::*').get_attribute('href')
 
-        p_url = p_basic_stats[0].find_element_by_xpath('child::*').get_attribute('href')
+            if len(p_basic_stats) > 2:
+                p_team = game_teams_links[team_idx]
 
-        if len(p_basic_stats) > 2:
-            p_team = g_t1_link
+                # Basic
 
-            # Basic
+                p_mp = assign_if_no_errors(p_basic_stats[1].text, lambda x: '00:{}'.format(x))
+                p_fg = assign_if_no_errors(p_basic_stats[2].text, int)
+                p_fga = assign_if_no_errors(p_basic_stats[3].text, int)
+                p_fgp = assign_if_no_errors(p_basic_stats[4].text, float)
+                p_3p = assign_if_no_errors(p_basic_stats[5].text, int)
+                p_3pa = assign_if_no_errors(p_basic_stats[6].text, int)
+                p_3pp = assign_if_no_errors(p_basic_stats[7].text, float)
+                p_ft = assign_if_no_errors(p_basic_stats[8].text, int)
+                p_fta = assign_if_no_errors(p_basic_stats[9].text, int)
+                p_ftp = assign_if_no_errors(p_basic_stats[10].text, float)
+                p_orb = assign_if_no_errors(p_basic_stats[11].text, int)
+                p_drb = assign_if_no_errors(p_basic_stats[12].text, int)
+                p_trb = assign_if_no_errors(p_basic_stats[13].text, int)
+                p_ast = assign_if_no_errors(p_basic_stats[14].text, int)
+                p_stl = assign_if_no_errors(p_basic_stats[15].text, int)
+                p_blk = assign_if_no_errors(p_basic_stats[16].text, int)
+                p_tov = assign_if_no_errors(p_basic_stats[17].text, int)
+                p_pf = assign_if_no_errors(p_basic_stats[18].text, int)
+                p_pts = assign_if_no_errors(p_basic_stats[19].text, int)
+                p_pm = assign_if_no_errors(p_basic_stats[20].text, int)
 
-            p_mp = try_except(p_basic_stats[1].text.split(':')[0], 0)
-            p_fg = try_except(p_basic_stats[2].text)
-            p_fga = try_except(p_basic_stats[3].text)
-            p_fgp = try_except(p_basic_stats[4].text)
-            p_3p = try_except(p_basic_stats[5].text)
-            p_3pa = try_except(p_basic_stats[6].text)
-            p_3pp = try_except(p_basic_stats[7].text)
-            p_ft = try_except(p_basic_stats[8].text)
-            p_fta = try_except(p_basic_stats[9].text)
-            p_ftp = try_except(p_basic_stats[10].text)
-            p_orb = try_except(p_basic_stats[11].text)
-            p_drb = try_except(p_basic_stats[12].text)
-            p_ast = try_except(p_basic_stats[14].text)
-            p_stl = try_except(p_basic_stats[15].text)
-            p_blk = try_except(p_basic_stats[16].text)
-            p_tov = try_except(p_basic_stats[17].text)
-            p_pf = try_except(p_basic_stats[18].text)
-            p_pts = try_except(p_basic_stats[19].text)
-            p_pm = try_except(p_basic_stats[20].text)
+                # Advanced
 
-            # Advanced
+                p_tsp = assign_if_no_errors(p_advanced_stats[2].text, float)
+                p_efgp = assign_if_no_errors(p_advanced_stats[3].text, float)
+                p_3par = assign_if_no_errors(p_advanced_stats[4].text, float)
+                p_ftr = assign_if_no_errors(p_advanced_stats[5].text, float)
+                p_orbp = assign_if_no_errors(p_advanced_stats[6].text, float)
+                p_drbp = assign_if_no_errors(p_advanced_stats[7].text, float)
+                p_trbp = assign_if_no_errors(p_advanced_stats[8].text, float)
+                p_astp = assign_if_no_errors(p_advanced_stats[9].text, float)
+                p_stlp = assign_if_no_errors(p_advanced_stats[10].text, float)
+                p_blkp = assign_if_no_errors(p_advanced_stats[11].text, float)
+                p_tovp = assign_if_no_errors(p_advanced_stats[12].text, float)
+                p_usgp = assign_if_no_errors(p_advanced_stats[13].text, float)
+                p_ortg = assign_if_no_errors(p_advanced_stats[14].text, int)
+                p_drtg = assign_if_no_errors(p_advanced_stats[15].text, int)
 
-            p_tsp = try_except(p_advanced_stats[2].text)
-            p_efgp = try_except(p_advanced_stats[3].text)
-            p_3par = try_except(p_advanced_stats[4].text)
-            p_ftr = try_except(p_advanced_stats[5].text)
-            p_orbp = try_except(p_advanced_stats[6].text)
-            p_drbp = try_except(p_advanced_stats[7].text)
-            p_trbp = try_except(p_advanced_stats[8].text)
-            p_astp = try_except(p_advanced_stats[9].text)
-            p_stlp = try_except(p_advanced_stats[10].text)
-            p_blkp = try_except(p_advanced_stats[11].text)
-            p_tovp = try_except(p_advanced_stats[12].text)
-            p_usgp = try_except(p_advanced_stats[13].text)
-            p_ortg = try_except(p_advanced_stats[14].text)
-            p_drtg = try_except(p_advanced_stats[15].text)
+                p_stats_row = {'game_url': game_url,
+                               'team_url': p_team,
 
-            p_stats_row = {'GameUrl': game_url,
-                           'GameDate': g_date,
-                           'Team': p_team,
+                               'mp': p_mp,
+                               'fg': p_fg,
+                               'fga': p_fga,
+                               'fgp': p_fgp,
+                               'thp': p_3p,
+                               'thpa': p_3pa,
+                               'thpp': p_3pp,
+                               'ft': p_ft,
+                               'fta': p_fta,
+                               'ftp': p_ftp,
+                               'orb': p_orb,
+                               'drb': p_drb,
+                               'trb': p_trb,
+                               'ast': p_ast,
+                               'stl': p_stl,
+                               'blk': p_blk,
+                               'tov': p_tov,
+                               'pf': p_pf,
+                               'pts': p_pts,
+                               'pm': p_pm,
 
-                           'MP': p_mp,
-                           'FG': p_fg,
-                           'FGA': p_fga,
-                           'FGP': p_fgp,
-                           '3P': p_3p,
-                           '3PA': p_3pa,
-                           '3PP': p_3pp,
-                           'FT': p_ft,
-                           'FTA': p_fta,
-                           'FTP': p_ftp,
-                           'ORB': p_orb,
-                           'DRB': p_drb,
-                           'AST': p_ast,
-                           'STL': p_stl,
-                           'BLK': p_blk,
-                           'TOV': p_tov,
-                           'PF': p_pf,
-                           'PTS': p_pts,
-                           'PM': p_pm,
+                               'tsp': p_tsp,
+                               'efgp': p_efgp,
+                               'thpar': p_3par,
+                               'ftr': p_ftr,
+                               'orbp': p_orbp,
+                               'drbp': p_drbp,
+                               'trbp': p_trbp,
+                               'astp': p_astp,
+                               'stlp': p_stlp,
+                               'blkp': p_blkp,
+                               'tovp': p_tovp,
+                               'usgp': p_usgp,
+                               'ortg': p_ortg,
+                               'drtg': p_drtg}
 
-                           'TSP': p_tsp,
-                           'EFGP': p_efgp,
-                           '3PAR': p_3par,
-                           'FTR': p_ftr,
-                           'ORBP': p_orbp,
-                           'DRBP': p_drbp,
-                           'TRBP': p_trbp,
-                           'ASTP': p_astp,
-                           'STLP': p_stlp,
-                           'BLKP': p_blkp,
-                           'TOVP': p_tovp,
-                           'USGP': p_usgp,
-                           'ORTG': p_ortg,
-                           'DRTG': p_drtg}
+                table_name = "player_games.{}".format(p_url.split('/')[-1].split('.')[0].capitalize())
+                table_params = [['game_url', 'NCHAR(100)', 'PRIMARY KEY'],
+                                ['team_url', 'NCHAR(100)', 'REFERENCES Teams (url) ON DELETE SET NULL'],
 
-            path = '/'.join(p_url.split('/')[-2:])
-            player_file_path = "parsing/results/players/{path}.csv".format(path=path)
-            if not os.path.isfile(player_file_path):
-                stats_df = pd.DataFrame([p_stats_row]).set_index('GameUrl')
-            else:
-                new_row_df = pd.DataFrame([p_stats_row]).set_index('GameUrl')
-                stats_df = pd.read_csv(player_file_path, sep=';', index_col=0)
-                if game_url not in stats_df.index:
-                    stats_df = stats_df.append(new_row_df)
-            stats_df.to_csv(player_file_path, sep=';')
+                                ['mp', 'TIME(0)', ''],
+                                ['fg', 'TINYINT', ''],
+                                ['fga', 'TINYINT', ''],
+                                ['fgp', 'REAL', ''],
+                                ['thp', 'TINYINT', ''],
+                                ['thpa', 'TINYINT', ''],
+                                ['thpp', 'REAL', ''],
+                                ['ft', 'TINYINT', ''],
+                                ['fta', 'TINYINT', ''],
+                                ['ftp', 'REAL', ''],
+                                ['orb', 'TINYINT', ''],
+                                ['drb', 'TINYINT', ''],
+                                ['trb', 'TINYINT', ''],
+                                ['ast', 'TINYINT', ''],
+                                ['stl', 'TINYINT', ''],
+                                ['blk', 'TINYINT', ''],
+                                ['tov', 'TINYINT', ''],
+                                ['pf', 'TINYINT', ''],
+                                ['pts', 'TINYINT', ''],
+                                ['pm', 'SMALLINT', ''],
 
-    # Loop for team 2
+                                ['tsp', 'REAL', ''],
+                                ['efgp', 'REAL', ''],
+                                ['thpar', 'REAL', ''],
+                                ['ftr', 'REAL', ''],
+                                ['orbp', 'REAL', ''],
+                                ['drbp', 'REAL', ''],
+                                ['trbp', 'REAL', ''],
+                                ['astp', 'REAL', ''],
+                                ['stlp', 'REAL', ''],
+                                ['blkp', 'REAL', ''],
+                                ['tovp', 'REAL', ''],
+                                ['usgp', 'REAL', ''],
+                                ['ortg', 'REAL', ''],
+                                ['drtg', 'REAL', '']]
+                db_adapter.save_to_table(table_name,
+                                         pd.DataFrame([p_stats_row]),
+                                         use_into=True,
+                                         create_table_params=table_params)
 
-    rows_number = len(t2_basic_stats)
-
-    for player_num in range(rows_number):
-        p_basic_stats = t2_basic_stats[player_num].find_elements_by_xpath('child::*')
-        p_advanced_stats = t2_advanced_stats[player_num].find_elements_by_xpath('child::*')
-
-        p_url = p_basic_stats[0].find_element_by_xpath('child::*').get_attribute('href')
-
-        if len(p_basic_stats) > 2:
-            p_team = g_t2_link
-
-            # Basic
-
-            p_mp = try_except(p_basic_stats[1].text.split(':')[0], 0)
-            p_fg = try_except(p_basic_stats[2].text)
-            p_fga = try_except(p_basic_stats[3].text)
-            p_fgp = try_except(p_basic_stats[4].text)
-            p_3p = try_except(p_basic_stats[5].text)
-            p_3pa = try_except(p_basic_stats[6].text)
-            p_3pp = try_except(p_basic_stats[7].text)
-            p_ft = try_except(p_basic_stats[8].text)
-            p_fta = try_except(p_basic_stats[9].text)
-            p_ftp = try_except(p_basic_stats[10].text)
-            p_orb = try_except(p_basic_stats[11].text)
-            p_drb = try_except(p_basic_stats[12].text)
-            p_ast = try_except(p_basic_stats[14].text)
-            p_stl = try_except(p_basic_stats[15].text)
-            p_blk = try_except(p_basic_stats[16].text)
-            p_tov = try_except(p_basic_stats[17].text)
-            p_pf = try_except(p_basic_stats[18].text)
-            p_pts = try_except(p_basic_stats[19].text)
-            p_pm = try_except(p_basic_stats[20].text)
-
-            # Advanced
-
-            p_tsp = try_except(p_advanced_stats[2].text)
-            p_efgp = try_except(p_advanced_stats[3].text)
-            p_3par = try_except(p_advanced_stats[4].text)
-            p_ftr = try_except(p_advanced_stats[5].text)
-            p_orbp = try_except(p_advanced_stats[6].text)
-            p_drbp = try_except(p_advanced_stats[7].text)
-            p_trbp = try_except(p_advanced_stats[8].text)
-            p_astp = try_except(p_advanced_stats[9].text)
-            p_stlp = try_except(p_advanced_stats[10].text)
-            p_blkp = try_except(p_advanced_stats[11].text)
-            p_tovp = try_except(p_advanced_stats[12].text)
-            p_usgp = try_except(p_advanced_stats[13].text)
-            p_ortg = try_except(p_advanced_stats[14].text)
-            p_drtg = try_except(p_advanced_stats[15].text)
-
-            p_stats_row = {'GameUrl': game_url,
-                           'GameDate': g_date,
-                           'Team': p_team,
-
-                           'MP': p_mp,
-                           'FG': p_fg,
-                           'FGA': p_fga,
-                           'FGP': p_fgp,
-                           '3P': p_3p,
-                           '3PA': p_3pa,
-                           '3PP': p_3pp,
-                           'FT': p_ft,
-                           'FTA': p_fta,
-                           'FTP': p_ftp,
-                           'ORB': p_orb,
-                           'DRB': p_drb,
-                           'AST': p_ast,
-                           'STL': p_stl,
-                           'BLK': p_blk,
-                           'TOV': p_tov,
-                           'PF': p_pf,
-                           'PTS': p_pts,
-                           'PM': p_pm,
-
-                           'TSP': p_tsp,
-                           'EFGP': p_efgp,
-                           '3PAR': p_3par,
-                           'FTR': p_ftr,
-                           'ORBP': p_orbp,
-                           'DRBP': p_drbp,
-                           'TRBP': p_trbp,
-                           'ASTP': p_astp,
-                           'STLP': p_stlp,
-                           'BLKP': p_blkp,
-                           'TOVP': p_tovp,
-                           'USGP': p_usgp,
-                           'ORTG': p_ortg,
-                           'DRTG': p_drtg}
-
-            path = '/'.join(p_url.split('/')[-2:])
-            player_file_path = "parsing/results/players/{path}.csv".format(path=path)
-            if not os.path.isfile(player_file_path):
-                stats_df = pd.DataFrame([p_stats_row]).set_index('GameUrl')
-            else:
-                new_row_df = pd.DataFrame([p_stats_row]).set_index('GameUrl')
-                stats_df = pd.read_csv(player_file_path, sep=';', index_col=0)
-                if game_url not in stats_df.index:
-                    stats_df = stats_df.append(new_row_df)
-            stats_df.to_csv(player_file_path, sep=';')
-
+    # TODO: Save to db
     if not os.path.isfile("parsing/results/GamesList.csv"):
         games_df = pd.DataFrame([game_row]).set_index('GameUrl')
     else:
@@ -344,8 +275,9 @@ def parse_game(game_url, parser: SeleniumParser):
 
 
 # noinspection PyBroadException
-def try_except(success, failure=0):
+def assign_if_no_errors(input_val, function=None, failure=None):
     try:
-        return float(success)
+        output_val = function(input_val)
+        return output_val
     except Exception:
         return failure
