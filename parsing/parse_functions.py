@@ -2,7 +2,6 @@ from parsing.util import SeleniumParser
 from database.util import DBAdapter
 import string
 import datetime
-import os
 import pandas as pd
 
 
@@ -89,7 +88,8 @@ def parse_some_games(month, year, parser: SeleniumParser, db_adapted: DBAdapter,
 def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
     name_xpath = "//a[@itemprop='name']"
     date_xpath = "//div[@class='scorebox_meta']/div[1]"
-    scores_xpath = "//div[@class='score']"
+    total_scores_xpath = "//div[@class='score']"
+    quarter_scores_xpath = "//table[@id='line_score']/tbody/tr/td[position()>1 and position()<6]"
     players_basics_blank_xpath = "//div[contains(@id, 'all_box-{team}-game-basic')]//tbody/" \
                                  "tr[not(@class)]"
     players_advanced_blank_xpath = "//div[contains(@id, 'all_box-{team}-game-advanced')]//tbody/" \
@@ -113,18 +113,56 @@ def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
     teams_players_basics_xpath = list(map(lambda x: players_basics_blank_xpath.format(team=x), teams_short))
     teams_players_advanced_xpath = list(map(lambda x: players_advanced_blank_xpath.format(team=x), teams_short))
 
-    game_date = datetime.datetime.strptime(parser.get_xpath(date_xpath)[0].text,
-                                           "%I:%M %p, %B %d, %Y").strftime("%d/%m/%Y")
+    game_datetime = datetime.datetime.strptime(parser.get_xpath(date_xpath)[0].text, "%I:%M %p, %B %d, %Y")
 
     game_teams_links = [item[0] for item in teams_info]
-    game_teams_scores = list(map(lambda x: x.text, parser.get_xpath(scores_xpath)))
+
+    game_total_teams_scores = list(map(lambda x: x.text, parser.get_xpath(total_scores_xpath)))
+    game_quarters_teams_scores = list(map(lambda x: x.text, parser.get_xpath(quarter_scores_xpath)))
+    game_quarters_team1_scores = game_quarters_teams_scores[:4]
+    game_quarters_team2_scores = game_quarters_teams_scores[4:]
+
+    winner_url = game_teams_links[0] if game_total_teams_scores[0] > game_total_teams_scores[1] else game_teams_links[1]
 
     game_row = {'url': game_url,
-                'date': game_date,
-                'team1_link': game_teams_links[0],
-                'team2_link': game_teams_links[1],
-                'team1_score': game_teams_scores[0],
-                'team2_score': game_teams_scores[1]}
+                'datetime': game_datetime.strftime("%d/%m/%Y %H:%M:00"),
+                'team1_url': game_teams_links[0],
+                'team2_url': game_teams_links[1],
+                'home_team_url': game_teams_links[1],
+                'winner_team_url': winner_url,
+                'team1_total_score': game_total_teams_scores[0],
+                'team2_total_score': game_total_teams_scores[1],
+                'team1_q1_score': game_quarters_team1_scores[0],
+                'team1_q2_score': game_quarters_team1_scores[1],
+                'team1_q3_score': game_quarters_team1_scores[2],
+                'team1_q4_score': game_quarters_team1_scores[3],
+                'team2_q1_score': game_quarters_team2_scores[0],
+                'team2_q2_score': game_quarters_team2_scores[1],
+                'team2_q3_score': game_quarters_team2_scores[2],
+                'team2_q4_score': game_quarters_team2_scores[3],
+                }
+
+    table_name = 'Games'
+    table_params = [['url', 'NCHAR(100)', 'PRIMARY KEY'],
+                    ['datetime', 'DATETIME', ''],
+                    ['team1_url', 'NCHAR(100)', 'REFERENCES Teams (url) ON DELETE NO ACTION'],
+                    ['team2_url', 'NCHAR(100)', 'REFERENCES Teams (url) ON DELETE NO ACTION'],
+                    ['home_team_url', 'NCHAR(100)', 'REFERENCES Teams (url) ON DELETE NO ACTION'],
+                    ['winner_team_url', 'NCHAR(100)', 'REFERENCES Teams (url) ON DELETE NO ACTION'],
+                    ['team1_total_score', 'TINYINT', ''],
+                    ['team2_total_score', 'TINYINT', ''],
+                    ['team1_q1_score', 'TINYINT', ''],
+                    ['team1_q2_score', 'TINYINT', ''],
+                    ['team1_q3_score', 'TINYINT', ''],
+                    ['team1_q4_score', 'TINYINT', ''],
+                    ['team2_q1_score', 'TINYINT', ''],
+                    ['team2_q2_score', 'TINYINT', ''],
+                    ['team2_q3_score', 'TINYINT', ''],
+                    ['team2_q4_score', 'TINYINT', '']]
+    db_adapter.save_to_table(table_name,
+                             pd.DataFrame([game_row]),
+                             use_into=True,
+                             create_table_params=table_params)
 
     basic_stats = list(map(lambda x: parser.get_xpath(x), teams_players_basics_xpath))
     advanced_stats = list(map(lambda x: parser.get_xpath(x), teams_players_advanced_xpath))
@@ -180,7 +218,8 @@ def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
                 p_ortg = assign_if_no_errors(p_advanced_stats[14].text, int)
                 p_drtg = assign_if_no_errors(p_advanced_stats[15].text, int)
 
-                p_stats_row = {'game_url': game_url,
+                p_stats_row = {'player_url': p_url,
+                               'game_url': game_url,
                                'team_url': p_team,
 
                                'mp': p_mp,
@@ -219,9 +258,11 @@ def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
                                'ortg': p_ortg,
                                'drtg': p_drtg}
 
-                table_name = "player_games.{}".format(p_url.split('/')[-1].split('.')[0].capitalize())
-                table_params = [['game_url', 'NCHAR(100)', 'PRIMARY KEY'],
-                                ['team_url', 'NCHAR(100)', 'REFERENCES Teams (url) ON DELETE SET NULL'],
+                table_name = "PlayersStats"
+                table_extra_params = "PRIMARY KEY(player_url, game_url)"
+                table_params = [['player_url', 'NCHAR(100)', 'REFERENCES Players (url) ON DELETE NO ACTION'],
+                                ['game_url', 'NCHAR(100)', 'REFERENCES Games (url) ON DELETE NO ACTION'],
+                                ['team_url', 'NCHAR(100)', 'REFERENCES Teams (url) ON DELETE NO ACTION'],
 
                                 ['mp', 'TIME(0)', ''],
                                 ['fg', 'TINYINT', ''],
@@ -261,17 +302,8 @@ def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
                 db_adapter.save_to_table(table_name,
                                          pd.DataFrame([p_stats_row]),
                                          use_into=True,
-                                         create_table_params=table_params)
-
-    # TODO: Save to db
-    if not os.path.isfile("parsing/results/GamesList.csv"):
-        games_df = pd.DataFrame([game_row]).set_index('GameUrl')
-    else:
-        new_row_df = pd.DataFrame([game_row]).set_index('GameUrl')
-        games_df = pd.read_csv("parsing/results/GamesList.csv", sep=';', index_col=0)
-        if game_url not in games_df.index:
-            games_df = games_df.append(new_row_df)
-    games_df.to_csv("parsing/results/GamesList.csv", sep=";")
+                                         create_table_params=table_params,
+                                         create_table_extra_params=table_extra_params)
 
 
 # noinspection PyBroadException
