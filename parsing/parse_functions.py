@@ -2,6 +2,7 @@ from parsing.util import SeleniumParser
 from database.util import DBAdapter
 import string
 import datetime
+import warnings
 import pandas as pd
 
 
@@ -68,12 +69,33 @@ def parse_teams(parser: SeleniumParser, db_adapter: DBAdapter):
     db_adapter.save_to_table(table_name, teams_df, create_table_params=table_params)
 
 
-def parse_some_games(month, year, parser: SeleniumParser, db_adapted: DBAdapter, verbose=True):
+def parse_time_period(years: list, parser: SeleniumParser, db_adapted: DBAdapter):
+    all_months = ['september',
+                  'october',
+                  'november',
+                  'december',
+                  'january',
+                  'february',
+                  'march',
+                  'april',
+                  'may',
+                  'june',
+                  'july',
+                  'august']
+    for year in years:
+        for month in all_months:
+            parse_month(year, month, parser, db_adapted)
+
+
+def parse_month(year: int, month: str, parser: SeleniumParser, db_adapted: DBAdapter, verbose=True):
     blank_url = "https://www.basketball-reference.com/leagues/NBA_{year}_games-{month}.html"
     xpath = "//tbody/tr/td[@data-stat='box_score_text']/a"
     game_list_url = blank_url.format(year=year, month=month)
 
-    parser.reconnect(game_list_url)
+    connected = parser.reconnect(game_list_url)
+    if not connected:
+        warnings.warn("\n\nRequest : {}\nFailed to get 200, see previous description\n".format(game_list_url))
+        return None
     res = parser.get_xpath(xpath)
 
     game_links = [game_info.get_attribute('href') for game_info in res]
@@ -100,6 +122,14 @@ def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
     teams_stats_urls = list(map(lambda x: x.get_attribute("href"), parser.get_xpath(name_xpath)))
     teams_urls = list(map(lambda x: x[:x.rindex('/') + 1], teams_stats_urls))
 
+    # TODO: Fix Charlotte Hornets in some cases is CHH (in db it is CHA)
+    # CHH -> CHA
+    # SEA -> OKC
+    # VAN -> MEM
+    teams_urls = list(map(lambda x: x.replace('CHH', 'CHA'), teams_urls))
+    teams_urls = list(map(lambda x: x.replace('SEA', 'OKC'), teams_urls))
+    teams_urls = list(map(lambda x: x.replace('VAN', 'MEM'), teams_urls))
+
     team1_info = db_adapter.select_from_table('Teams',
                                               columns='TRIM(url), TRIM(short_name)',
                                               condition="url='{t_url}'".format(t_url=teams_urls[0]))
@@ -113,6 +143,7 @@ def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
     teams_players_basics_xpath = list(map(lambda x: players_basics_blank_xpath.format(team=x), teams_short))
     teams_players_advanced_xpath = list(map(lambda x: players_advanced_blank_xpath.format(team=x), teams_short))
 
+    # TODO: fix error while parsing datetime in 1999 and earlier
     game_datetime = datetime.datetime.strptime(parser.get_xpath(date_xpath)[0].text, "%I:%M %p, %B %d, %Y")
 
     game_teams_links = [item[0] for item in teams_info]
