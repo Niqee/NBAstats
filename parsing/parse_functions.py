@@ -189,7 +189,8 @@ def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
                     ['team2_q1_score', 'TINYINT', ''],
                     ['team2_q2_score', 'TINYINT', ''],
                     ['team2_q3_score', 'TINYINT', ''],
-                    ['team2_q4_score', 'TINYINT', '']]
+                    ['team2_q4_score', 'TINYINT', ''],
+                    ['loaded', 'BIT', 'DEFAULT 0']]
     db_adapter.save_to_table(table_name,
                              pd.DataFrame([game_row]),
                              use_into=True,
@@ -335,6 +336,9 @@ def parse_game(game_url, parser: SeleniumParser, db_adapter: DBAdapter):
                                          use_into=True,
                                          create_table_params=table_params,
                                          create_table_extra_params=table_extra_params)
+
+    # TODO: Implement update method
+    db_adapter.exec("UPDATE Games SET loaded = 1 WHERE url = '{}'".format(game_url), no_return=True)
 
 
 # noinspection PyBroadException
