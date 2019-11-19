@@ -22,7 +22,7 @@ class DBAdapter(object):
     def exec(self,
              query: str,
              no_return: bool = False,
-             verbose: bool = True):
+             verbose: bool = False):
 
         if verbose:
             print(query)
@@ -34,7 +34,7 @@ class DBAdapter(object):
                      table_name: str,
                      params: list,
                      extra_params: str = None,
-                     verbose: bool = True):
+                     verbose: bool = False):
 
         main_blank = "CREATE TABLE [{name}] ({columns} {extra_params});"
         column_blank = "{name} {type} {attrs}, "
@@ -61,7 +61,7 @@ class DBAdapter(object):
                       use_into=False,
                       create_table_params: list = None,
                       create_table_extra_params: str = None,
-                      verbose=True):
+                      verbose=False):
 
         command_blank = "INSERT {into} [{table_name}] {columns} VALUES ({values})"
 
@@ -101,7 +101,7 @@ class DBAdapter(object):
 
     def select_from_table(self,
                           table_name: str,
-                          verbose: bool = True,
+                          verbose: bool = False,
                           **params):
 
         command_blank = 'SELECT {columns} FROM [{table}] {where} {condition}'
