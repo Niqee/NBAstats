@@ -1,6 +1,7 @@
 /parsing/results/
 geckodriver.log
 .idea/
-/clear_player_stats.bat
 /main.py
-/parsing/parse_plan.csv
+/progress/parse_plan.csv
+/progress/log_ok.txt
+/progress/log_err.txt
