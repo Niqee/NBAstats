@@ -128,3 +128,24 @@ class DBAdapter(object):
 
     def table_exists(self, table_name: str):
         return not self.table_not_exists(table_name)
+
+
+class CSVAdapter(object):
+
+    def __init__(self, files_dir="database/files"):
+        self.files_dir = files_dir + r"/{file_name}.csv"
+
+    def save_data(self, file_name, rows_list, index):
+        pd.DataFrame(rows_list).set_index(index).to_csv(self.files_dir.format(file_name=file_name), sep=';')
+
+    # def create_file(self):
+    #     pass
+
+    def get_completed_urls(self):
+        pass
+
+    def get_failed_urls(self):
+        pass
+
+    def get_processed_urls(self):
+        pass
