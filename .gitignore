@@ -1,7 +1,6 @@
-/parsing/results/
 geckodriver.log
 .idea/
-/main.py
-/progress/parse_plan.csv
-/progress/log_ok.txt
-/progress/log_err.txt
+main.py
+/progress/plan_data.csv
+/logger/logs
+/database/files
