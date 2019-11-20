@@ -2,8 +2,10 @@ from selenium import webdriver
 from selenium.webdriver.firefox.firefox_profile import FirefoxProfile
 import urllib.request
 import urllib.error as err
+import requests
 from termcolor import colored
 import time
+from bs4 import BeautifulSoup
 
 
 class SeleniumParser:
@@ -56,3 +58,27 @@ class SeleniumParser:
 
     def disconnect(self):
         self.driver.close()
+
+
+class SoupParser:
+
+    def __init__(self):
+        self.__soup = None
+
+    @property
+    def soup(self) -> BeautifulSoup:
+        return self.__soup
+
+    def connect(self, url):
+        page = requests.get(url)
+        if page.status_code < 400:
+            self.__soup = BeautifulSoup(page.text, "html.parser")
+        else:
+            raise ConnectionFailed("Failed to connect, info:\n"
+                                   "url : {url}\n"
+                                   "code : {code}".format(url=url,
+                                                          code=page.status_code))
+
+
+class ConnectionFailed(Exception):
+    pass
