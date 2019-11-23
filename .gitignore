@@ -4,3 +4,4 @@ main.py
 /progress/plan_data.csv
 /logger/logs
 /database/files
+/progress/plan_data_copy.csv
