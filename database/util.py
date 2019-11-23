@@ -1,6 +1,7 @@
 import pyodbc
 import pandas as pd
 import warnings
+import os
 
 
 class DBAdapter(object):
@@ -136,16 +137,32 @@ class CSVAdapter(object):
         self.files_dir = files_dir + r"/{file_name}.csv"
 
     def save_data(self, file_name, rows_list, index):
-        pd.DataFrame(rows_list).set_index(index).to_csv(self.files_dir.format(file_name=file_name), sep=';')
+        save_path = self.files_dir.format(file_name=file_name)
+        new_df = pd.DataFrame(rows_list).set_index(index)
+        if os.path.isfile(save_path):
+            cache_df = pd.read_csv(save_path, sep=';', index_col=index)
+            new_df = cache_df.combine_first(new_df)
+        new_df.to_csv(save_path, sep=';')
 
-    # def create_file(self):
-    #     pass
-
-    def get_completed_urls(self):
-        pass
-
-    def get_failed_urls(self):
-        pass
+    def update_data(self, file_name, index, row, column, value):
+        update_path = self.files_dir.format(file_name=file_name)
+        cache_df = pd.read_csv(update_path, sep=';').set_index(index)
+        cache_df.at[row, column] = value
+        cache_df.to_csv(update_path, sep=';')
 
     def get_processed_urls(self):
-        pass
+        games_path = self.files_dir.format(file_name='Games')
+        if not os.path.isfile(games_path):
+            return list()
+        cache_df = pd.read_csv(games_path, sep=';', index_col='Url')
+        return cache_df.loc[cache_df['Completed']].index
+
+    # TODO: Add warn
+    def has_value_in_file(self, val, file_name, column):
+        file_path = self.files_dir.format(file_name=file_name)
+        if not os.path.isfile(file_path):
+            # No such file warn
+            return False
+        target_df = pd.read_csv(file_path, sep=';')
+        # TODO: Fix '\n' symbols in target_df.loc[:, column]
+        return val in list(map(lambda x: x.strip('\n'), target_df.loc[:, column]))
