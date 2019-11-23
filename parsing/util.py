@@ -69,6 +69,10 @@ class SoupParser:
     def soup(self) -> BeautifulSoup:
         return self.__soup
 
+    @staticmethod
+    def parse_str(input_str):
+        return BeautifulSoup(input_str, "html.parser")
+
     def connect(self, url):
         page = requests.get(url)
         if page.status_code < 400:
